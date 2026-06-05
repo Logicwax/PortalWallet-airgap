@@ -1,0 +1,99 @@
+---
+# Minimal X stack + an Electron "hello world" app.  The packaged Electron binary is run
+# directly from `.xinitrc` with no window manager. Chromium creates and
+# fullscreens its own top-level window (see app/main.js: portalwallet + fullscreen),
+# so no WM is needed to size/place/focus it.
+#
+# `xserver-xorg` + `xinit` pull a slim X server (no xterm/twm/extra fonts).
+# The remaining libs are Electron/Chromium's GTK.
+- name: Install minimal X + Electron runtime libraries
+  apt:
+    update_cache: yes
+    pkg:
+    - xserver-xorg
+    - xinit
+    - x11-xserver-utils
+    - libgtk-3-0
+    - libnss3
+    - libnotify4
+    - libasound2
+    - libxtst6
+    - libglib2.0-bin
+    - xdg-utils
+    - zlib1g
+
+# Node.js + corepack are only needed at build time to package the Electron app;
+# both are removed again in the `cleanup` role. We use Debian trixie's own
+# nodejs rather than the NodeSource repo — it's new enough for
+# @electron/packager, needs no external apt repo / signing key, and keeps the
+# build self-contained. corepack ships as the `node-corepack` package (a
+# dependency of nodejs); no npm needed. yarn (Berry) is then provisioned by
+# corepack from the `packageManager` field in app/package.json (yarn@4.16.0) —
+# verified that the distro corepack (0.24.0) provisions yarn 4.16.0 fine.
+- name: Install Node.js + corepack (build-time only)
+  block:
+    - apt:
+        update_cache: yes
+        pkg:
+        - nodejs
+        - node-corepack
+    - name: Enable corepack (provides the pinned yarn Berry)
+      shell: corepack enable
+
+- name: Xorg screen configuration
+  template:
+    src: xorg.conf
+    dest: /etc/X11/xorg.conf
+
+# Build the Electron app inside the image, then
+# drop the packaged linux-x64 output into /opt/portalwallet.
+- name: Build and install the Electron portalwallet app
+  block:
+    - file:
+        path: /opt/portalwallet
+        state: directory
+        mode: "0755"
+    - shell: chown -R portaluser:portaluser /tmp/portalwallet-app
+    # Package the app as the portaluser user (corepack downloads yarn Berry into
+    # portaluser's cache). Output lands in /tmp/portalwallet-app/out, portaluser-owned.
+    - name: Package the Electron app (as portaluser)
+      shell: |
+        cd /tmp/portalwallet-app
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+        yarn install --immutable
+        yarn run package
+      become: yes
+      become_user: "portaluser"
+    # Install the packaged output to /opt/portalwallet as root (the dir is root-owned),
+    # using `/.` so dotfiles are copied too.
+    - name: Install packaged app to /opt/portalwallet
+      shell: cp -R /tmp/portalwallet-app/out/portalwallet-linux-x64/. /opt/portalwallet/
+    # Electron's Chromium SUID sandbox helper aborts the whole app unless it is
+    # owned by root with mode 4755. Without this the binary FATALs at launch and
+    # the screen stays black.
+    - file:
+        path: /opt/portalwallet/chrome-sandbox
+        owner: root
+        group: root
+        mode: "4755"
+
+- name: Portalwallet session
+  block:
+    # Start X automatically on tty1 login (autologin is configured in `common`)
+    - lineinfile:
+        dest: /home/portaluser/.bash_profile
+        state: present
+        regexp: 'exec startx$'
+        line: '[[ -z "$DISPLAY" && ! -e /tmp/.X11-unix/X0 && -x /usr/bin/startx ]] && (( EUID )) && exec startx > /dev/null 2>&1'
+    # X session: disable screen blanking, then run the Electron binary directly
+    # (no window manager — Electron fullscreens its own window).
+    - copy:
+        dest: /home/portaluser/.xinitrc
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          xset s off -dpms
+          exec /opt/portalwallet/portalwallet
+    # Only /home/portaluser is chowned here — /opt/portalwallet is left root-owned so the
+    # setuid chrome-sandbox (set above) keeps mode 4755 root:root.
+    - shell: chown -R portaluser:portaluser /home/portaluser
