@@ -58,15 +58,15 @@ RAW := build/portalwallet-v$(BUILD_VERSION).img
 IMG_GZ := $(RAW).gz
 # Pinned base image digests. The apt snapshot date lives in */lock/debian.sources
 # (the source of truth); bump with `make builder-update` / `make os-builder-update`.
-DEBIAN_HASH    := $(strip $(shell cat deb-builder/lock/build-toolchain-debian-hash-lock.txt))
-OS_DEBIAN_HASH := $(strip $(shell cat os-builder/lock/build-toolchain-debian-hash-lock.txt))
+DEBIAN_HASH    := $(strip $(shell cat deb-builder/lock/debian-img-hash-lock.txt))
+OS_DEBIAN_HASH := $(strip $(shell cat os-builder/lock/build-toolchain-debian-img-hash-lock.txt))
 
 # Prints a clearly visible banner so each build stage stands out in the log
 # instead of scrolling past as one undifferentiated wall of text.
 
 # The buildx invocations below pass BUILDKIT_DOCKERFILE_CHECK=skip=InvalidDefaultArgInFrom.
 # DEBIAN_HASH has no default in the Dockerfile on purpose: the digest lives in
-# lock/build-toolchain-debian-hash-lock.txt and is passed on the command line. A default there
+# lock/build-toolchain-debian-img-hash-lock.txt and is passed on the command line. A default there
 # would be a second source of truth that could silently disagree with the lock.
 
 define stage
@@ -268,8 +268,8 @@ base-image-update:
 	@digest=$$(docker image inspect debian:trixie \
 		--format '{{index .RepoDigests 0}}' | cut -d@ -f2 | cut -d: -f2); \
 	if [ -z "$$digest" ]; then echo "ERROR: could not resolve digest"; exit 1; fi; \
-	echo "$$digest" > deb-builder/lock/build-toolchain-debian-hash-lock.txt; \
-	echo "$$digest" > os-builder/lock/build-toolchain-debian-hash-lock.txt; \
+	echo "$$digest" > deb-builder/lock/debian-img-hash-lock.txt; \
+	echo "$$digest" > os-builder/lock/build-toolchain-debian-img-hash-lock.txt; \
 	echo "debian:trixie -> sha256:$$digest (written to both lock files)"
 
 # Bump the deb builder's apt snapshot to today and regenerate its locks.
@@ -287,7 +287,7 @@ os-builder-update:
 		-v $(CURDIR)/os-builder:/config \
 		-e LOCAL_USER=$(shell id -u):$(shell id -g) \
 		debian@sha256:$(OS_DEBIAN_HASH) \
-		bash -c "cp /config/scripts/* /usr/local/bin/ && touch /.dockerenv && build-toolchain-packages-update"
+		bash -c "cp /config/scripts/* /usr/local/bin/ && touch /.dockerenv && build-toolchain-pkgs-update"
 
 # Regenerate the locks for the packages shipped INSIDE the image. Run after
 # editing os-builder/rootfs-packages.list — the build installs from the LOCK, so
@@ -302,7 +302,7 @@ rootfs-update: os-builder-update os-builder
 		-v $(CURDIR)/os-builder:/config \
 		-e LOCAL_USER=$(shell id -u):$(shell id -g) \
 		$(OS_BUILDER_IMAGE) \
-		/config/scripts/rootfs-packages-update
+		/config/scripts/rootfs-pkgs-update
 
 # Refresh EVERY pinned dependency except the app's yarn/node_modules (those live
 # in app/yarn.lock and are bumped deliberately with yarn, not here).

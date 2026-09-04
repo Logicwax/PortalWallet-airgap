@@ -126,7 +126,7 @@ Makefile                    # build / flash / test-boot / lock-update targets
 VERSION                     # image version string
 app/                        # minimal Electron app (main.js + src/)
 deb-builder/                # pinned builder image that compiles the app -> .deb
-  Dockerfile, build-deb.sh, build-toolchain-pkgs.list, lock/, scripts/
+  Dockerfile, build-deb.sh, pkgs.list, lock/, scripts/
 os-builder/                 # pinned builder image that assembles the OS image
   Dockerfile, build-os.sh
   genimage-grub.cfg         # ESP layout for BOOT=grub
